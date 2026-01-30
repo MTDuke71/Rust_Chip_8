@@ -1,0 +1,12 @@
+[package]
+name = "chip8_emulator"
+version = "0.1.0"
+edition = "2024"
+description = "A CHIP-8 emulator written in Rust"
+
+[dependencies]
+minifb = "0.27"    # Simple framebuffer for display
+rand = "0.8"       # Random number generation for Cxkk opcode
+
+[dev-dependencies]
+# Test utilities if needed later
