@@ -673,6 +673,32 @@ cargo test -- --test-threads=1
 
 ---
 
+## Code Coverage
+
+First, install the coverage tool (one-time setup):
+```bash
+cargo install cargo-llvm-cov
+```
+
+Then run coverage:
+```bash
+# Run coverage for all tests (console output)
+cargo llvm-cov
+
+# Run coverage for a specific module
+cargo llvm-cov -- memory::tests
+
+# Generate HTML report and open in browser
+cargo llvm-cov --html --open
+
+# Generate HTML report for a specific module
+cargo llvm-cov --html --open -- memory::tests
+```
+
+Coverage reports are saved to `target/llvm-cov/html/`.
+
+---
+
 ## Common Pitfalls
 
 1. **Off-by-one in PC**: Remember PC increments by 2 (instructions are 2 bytes)
