@@ -11,22 +11,27 @@ pub struct Keyboard {
 impl Keyboard {
     /// Creates a new keyboard with all keys released
     pub fn new() -> Self {
-        todo!("Implement Keyboard::new()")
+        Keyboard { keys:[false; 16] }
     }
 
     /// Returns true if the given key (0-F) is pressed
     pub fn is_key_pressed(&self, key: u8) -> bool {
-        todo!("Implement Keyboard::is_key_pressed()")
+        self.keys[key as usize]
     }
 
     /// Sets the state of a key (for input handling)
     pub fn set_key(&mut self, key: u8, pressed: bool) {
-        todo!("Implement Keyboard::set_key()")
+        self.keys[key as usize] = pressed;
     }
 
     /// Returns the first pressed key, or None if no key is pressed
     pub fn get_pressed_key(&self) -> Option<u8> {
-        todo!("Implement Keyboard::get_pressed_key()")
+        for (i, &pressed) in self.keys.iter().enumerate() {
+            if pressed {
+                return Some(i as u8);
+            }
+        }
+        None
     }
 }
 
@@ -71,5 +76,16 @@ mod tests {
         
         keyboard.set_key(0x7, true);
         assert_eq!(keyboard.get_pressed_key(), Some(0x7));
+    }
+
+    #[test]
+    fn test_keyboard_default() {
+        // Test that Default::default() works the same as new()
+        let keyboard = Keyboard::default();
+        // All keys should be released
+        for key in 0..16 {
+            assert_eq!(keyboard.is_key_pressed(key), false);
+        }
+        assert_eq!(keyboard.get_pressed_key(), None);
     }
 }
