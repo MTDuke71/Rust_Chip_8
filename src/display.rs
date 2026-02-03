@@ -119,4 +119,108 @@ mod tests {
         assert_eq!(display.get_pixel(0, 0), false);
         assert_eq!(display.get_pixel(63, 31), false);
     }
+
+    #[test]
+    fn test_draw_sprite_basic() {
+        let mut display = Display::new();
+        // Simple 1-byte sprite: 0b11110000 = ████░░░░
+        let sprite = [0b11110000];
+        let collision = display.draw_sprite(0, 0, &sprite);
+        
+        // Check pixels are set
+        assert_eq!(display.get_pixel(0, 0), true);
+        assert_eq!(display.get_pixel(1, 0), true);
+        assert_eq!(display.get_pixel(2, 0), true);
+        assert_eq!(display.get_pixel(3, 0), true);
+        assert_eq!(display.get_pixel(4, 0), false);
+        assert_eq!(collision, false); // No collision on blank screen
+    }
+
+    #[test]
+    fn test_draw_sprite_collision() {
+        let mut display = Display::new();
+        // Set a pixel first
+        display.set_pixel(2, 0, true);
+        
+        // Draw sprite that overlaps
+        let sprite = [0b11110000];
+        let collision = display.draw_sprite(0, 0, &sprite);
+        
+        // Pixel at (2,0) should be OFF now (XOR: true ^ true = false)
+        assert_eq!(display.get_pixel(2, 0), false);
+        assert_eq!(collision, true); // Collision detected!
+    }
+
+    #[test]
+    fn test_draw_sprite_xor() {
+        let mut display = Display::new();
+        let sprite = [0b10000000]; // Single pixel
+        
+        // Draw once - pixel turns ON
+        display.draw_sprite(5, 5, &sprite);
+        assert_eq!(display.get_pixel(5, 5), true);
+        
+        // Draw again - pixel turns OFF (XOR)
+        let collision = display.draw_sprite(5, 5, &sprite);
+        assert_eq!(display.get_pixel(5, 5), false);
+        assert_eq!(collision, true);
+    }
+
+    #[test]
+    fn test_draw_sprite_wrapping() {
+        let mut display = Display::new();
+        let sprite = [0b11111111]; // 8 pixels
+        
+        // Draw at edge - should wrap around
+        display.draw_sprite(62, 0, &sprite);
+        
+        // Pixels at edge
+        assert_eq!(display.get_pixel(62, 0), true);
+        assert_eq!(display.get_pixel(63, 0), true);
+        // Wrapped pixels
+        assert_eq!(display.get_pixel(0, 0), true);
+        assert_eq!(display.get_pixel(1, 0), true);
+    }
+
+    #[test]
+    fn test_draw_sprite_multi_row() {
+        let mut display = Display::new();
+        // 2-row sprite forming a simple pattern
+        let sprite = [
+            0b11110000, // Row 0
+            0b00001111, // Row 1
+        ];
+        display.draw_sprite(0, 0, &sprite);
+        
+        // Check row 0
+        assert_eq!(display.get_pixel(0, 0), true);
+        assert_eq!(display.get_pixel(3, 0), true);
+        assert_eq!(display.get_pixel(4, 0), false);
+        
+        // Check row 1
+        assert_eq!(display.get_pixel(0, 1), false);
+        assert_eq!(display.get_pixel(4, 1), true);
+        assert_eq!(display.get_pixel(7, 1), true);
+    }
+
+    #[test]
+    fn test_to_buffer() {
+        let mut display = Display::new();
+        display.set_pixel(0, 0, true);
+        display.set_pixel(63, 31, true);
+        
+        let buffer = display.to_buffer();
+        
+        // Check size
+        assert_eq!(buffer.len(), 64 * 32);
+        
+        // First pixel should be white
+        assert_eq!(buffer[0], 0xFFFFFF);
+        
+        // Last pixel should be white
+        assert_eq!(buffer[64 * 32 - 1], 0xFFFFFF);
+        
+        // Second pixel should be black
+        assert_eq!(buffer[1], 0x000000);
+    }
 }
