@@ -132,6 +132,8 @@ Specification/
 
 - [Build Guide](GUIDE.md) - Step-by-step guide for building this emulator
 - [CHIP-8 Specification](Specification/CHIP-8_Specification.md) - Complete opcode reference
+- [Implementation Comparison](IMPLEMENTATION_COMPARISON.md) - How this Rust emulator compares to other languages
+- [Test Results](TEST_RESULTS.md) - Comprehensive ROM testing results and compatibility report
 
 ## Architecture Details
 
@@ -175,6 +177,8 @@ You can find ROMs online through retro gaming communities. Create a `roms/` dire
 
 - [Cowgod's CHIP-8 Technical Reference](http://devernay.free.fr/hacks/chip8/C8TECH10.HTM)
 - [CHIP-8 Test Suite](https://github.com/Timendus/chip8-test-suite)
+- [Tobias V. Langhoff's Guide](https://tobiasvl.github.io/blog/write-a-chip-8-emulator/)
+- [COSMAC VIP Research](https://laurencescotford.com/chip-8-on-the-cosmac-vip-index/)
 
 ## License
 
