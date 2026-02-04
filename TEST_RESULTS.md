@@ -86,14 +86,16 @@
 
 #### ❌ Test 8: Scrolling (`8-scrolling.ch8`)
 - **Status**: ❌ **FAIL** - Not Supported
-- **Description**: Tests Super-CHIP scrolling instructions
+- **Description**: Tests Super-CHIP and XO-CHIP scrolling instructions
 - **Result**: Crashes with "Unknown opcode: 0x00FE"
 - **Error**: `thread 'main' panicked at src\cpu.rs:93:22: Unknown opcode: 0x00fe`
 - **Reason**: Super-CHIP extension (0x00FE = Disable high-res mode)
 - **Notes**: 
-  - Requires Super-CHIP implementation
-  - Standard CHIP-8 does not support scrolling
-  - Future enhancement: Add Super-CHIP mode
+  - Requires Super-CHIP or XO-CHIP implementation
+  - Standard CHIP-8 does not support scrolling or high-resolution modes
+  - Super-CHIP adds: 128×64 high-res mode, scrolling (0x00Cn, 0x00FB, 0x00FC, 0x00FD, 0x00FE, 0x00FF)
+  - XO-CHIP adds: Even more extensions on top of Super-CHIP
+  - Future enhancement: Add Super-CHIP/XO-CHIP modes
 
 ---
 
@@ -135,9 +137,9 @@
 - **Status**: ✅ **7/7 PASS** (100%)
 - **Notes**: All standard CHIP-8 features working perfectly
 
-#### Super-CHIP Extensions (Test 8)
+#### Super-CHIP/XO-CHIP Extensions (Test 8)
 - **Status**: ❌ **0/1 PASS** (0%)
-- **Notes**: Not implemented (by design)
+- **Notes**: Not implemented (by design - this emulator targets standard CHIP-8 only)
 
 #### Games
 - **Status**: ✅ **2/2 PASS** (100%)

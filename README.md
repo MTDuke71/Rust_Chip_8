@@ -132,6 +132,7 @@ Specification/
 
 - [Build Guide](GUIDE.md) - Step-by-step guide for building this emulator
 - [CHIP-8 Specification](Specification/CHIP-8_Specification.md) - Complete opcode reference
+- [CHIP-8 Variants](CHIP8_VARIANTS.md) - Differences between CHIP-8, Super-CHIP, and XO-CHIP
 - [Implementation Comparison](IMPLEMENTATION_COMPARISON.md) - How this Rust emulator compares to other languages
 - [Test Results](TEST_RESULTS.md) - Comprehensive ROM testing results and compatibility report
 
