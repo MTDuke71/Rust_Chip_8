@@ -26,6 +26,8 @@ pub struct Cpu {
     pub sound_timer: u8,
     /// Key wait state for FX0A: Some(key) = waiting for key to be released, None = not waiting
     waiting_for_key: Option<u8>,
+    /// Display wait state for DISP.WAIT quirk: true = waiting for VBlank after draw
+    waiting_for_vblank: bool,
 }
 
 impl Cpu {
@@ -41,6 +43,7 @@ impl Cpu {
             delay_timer: 0,
             sound_timer: 0,
             waiting_for_key: None,
+            waiting_for_vblank: false,
         }
     }
 
@@ -215,15 +218,25 @@ impl Cpu {
             }
             0xD000 => {
                 // Dxyn - DRW Vx, Vy, nibble: Display n-byte sprite at (Vx, Vy), set VF = collision
-                let x_coord = self.v[x];
-                let y_coord = self.v[y];
-                let height = n;
-                let mut sprite = Vec::new();
-                for row in 0..height {
-                    sprite.push(memory.read(self.i + row as u16));
+                // COSMAC VIP DISP.WAIT quirk: Wait for vertical blank before drawing
+                // This limits drawing to max 60 sprites per second (one per frame at 60 Hz)
+                if self.waiting_for_vblank {
+                    // Still waiting for VBlank - repeat this instruction (like COSMAC VIP IDL)
+                    self.pc -= 2;
+                } else {
+                    // VBlank has occurred, draw the sprite
+                    let x_coord = self.v[x];
+                    let y_coord = self.v[y];
+                    let height = n;
+                    let mut sprite = Vec::new();
+                    for row in 0..height {
+                        sprite.push(memory.read(self.i + row as u16));
+                    }
+                    let collision = display.draw_sprite(x_coord, y_coord, &sprite);
+                    self.v[0xF] = if collision { 1 } else { 0 };
+                    // Set flag - will be cleared on next timer tick (60 Hz VBlank)
+                    self.waiting_for_vblank = true;
                 }
-                let collision = display.draw_sprite(x_coord, y_coord, &sprite);
-                self.v[0xF] = if collision { 1 } else { 0 };
             }
             0xE000 => match opcode & 0x00FF {
                 0x009E => {
@@ -326,6 +339,8 @@ impl Cpu {
         if self.sound_timer > 0 {
             self.sound_timer -= 1;
         }
+        // Clear VBlank wait flag (DISP.WAIT quirk - allows one draw per 60Hz tick)
+        self.waiting_for_vblank = false;
     }
 }
 
@@ -726,10 +741,10 @@ mod tests {
         let mut display = Display::new();
         let keyboard = Keyboard::new();
 
-        cpu.v[7] = 0b10110101;
+        cpu.v[6] = 0b10110101;  // Source is Vy (V6)
 
-        // 8706 - SHR V7
-        cpu.execute(0x8706, &mut memory, &mut display, &keyboard);
+        // 8766 - SHR V7, V6 (COSMAC VIP quirk: copies V6 to V7, then shifts)
+        cpu.execute(0x8766, &mut memory, &mut display, &keyboard);
         assert_eq!(cpu.v[7], 0b01011010);
         assert_eq!(cpu.v[0xF], 1); // LSB was 1
     }
@@ -773,10 +788,10 @@ mod tests {
         let mut display = Display::new();
         let keyboard = Keyboard::new();
 
-        cpu.v[5] = 0b10110101;
+        cpu.v[3] = 0b10110101;  // Source is Vy (V3)
 
-        // 850E - SHL V5
-        cpu.execute(0x850E, &mut memory, &mut display, &keyboard);
+        // 853E - SHL V5, V3 (COSMAC VIP quirk: copies V3 to V5, then shifts)
+        cpu.execute(0x853E, &mut memory, &mut display, &keyboard);
         assert_eq!(cpu.v[5], 0b01101010);
         assert_eq!(cpu.v[0xF], 1); // MSB was 1
     }
@@ -991,6 +1006,9 @@ mod tests {
         cpu.execute(0xD121, &mut memory, &mut display, &keyboard);
         assert_eq!(cpu.v[0xF], 0);
 
+        // Tick timers to clear VBlank wait flag
+        cpu.tick_timers();
+
         // Draw second time at same position - should have collision
         cpu.execute(0xD121, &mut memory, &mut display, &keyboard);
         assert_eq!(cpu.v[0xF], 1);
@@ -1200,14 +1218,23 @@ mod tests {
         let mut keyboard = Keyboard::new();
 
         cpu.pc = 0x200;
+        
+        // First execution - no key pressed, should wait
+        cpu.execute(0xF30A, &mut memory, &mut display, &keyboard);
+        assert_eq!(cpu.pc, 0x1FE); // Decremented to repeat
+        
+        // Press key 0x0A
         keyboard.set_key(0x0A, true);
+        cpu.pc = 0x200;
+        cpu.execute(0xF30A, &mut memory, &mut display, &keyboard);
+        assert_eq!(cpu.pc, 0x1FE); // Still waiting for release
         
-        cpu.execute(0xF30A, &mut memory, &mut display, &keyboard); // LD V3, K
-        
-        // Should store the key value
-        assert_eq!(cpu.v[3], 0x0A);
-        // PC should remain at 0x200 (not decremented since key was pressed)
-        assert_eq!(cpu.pc, 0x200);
+        // Release key
+        keyboard.set_key(0x0A, false);
+        cpu.pc = 0x200;
+        cpu.execute(0xF30A, &mut memory, &mut display, &keyboard);
+        assert_eq!(cpu.v[3], 0x0A); // Key stored
+        assert_eq!(cpu.pc, 0x200); // PC advances normally
     }
 
     #[test]

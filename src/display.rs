@@ -36,27 +36,43 @@ impl Display {
     /// Draws a sprite at (x, y) with the given sprite data.
     /// Returns true if any pixel was erased (collision).
     /// Sprites are XORed onto the display.
-pub fn draw_sprite(&mut self, x: u8, y: u8, sprite: &[u8]) -> bool {
-    let mut collision = false;
-    
-    for (row, &sprite_byte) in sprite.iter().enumerate() {
-        let y_pos = (y as usize + row) % DISPLAY_HEIGHT;  // Wrap Y
+    /// COSMAC VIP quirk: coordinates wrap, but sprites clip at edges (no wrap during draw)
+    pub fn draw_sprite(&mut self, x: u8, y: u8, sprite: &[u8]) -> bool {
+        let mut collision = false;
         
-        for col in 0..8 {  // 8 bits per byte
-            let x_pos = (x as usize + col) % DISPLAY_WIDTH;  // Wrap X
-            let sprite_pixel = (sprite_byte >> (7 - col)) & 1 == 1;
+        // Wrap initial coordinates
+        let x_start = (x as usize) % DISPLAY_WIDTH;
+        let y_start = (y as usize) % DISPLAY_HEIGHT;
+        
+        for (row, &sprite_byte) in sprite.iter().enumerate() {
+            let y_pos = y_start + row;
             
-            if sprite_pixel {
-                if self.pixels[y_pos][x_pos] {
-                    collision = true;  // Pixel was on, will turn off
+            // Clip at bottom edge (COSMAC VIP quirk)
+            if y_pos >= DISPLAY_HEIGHT {
+                break;  // Stop drawing if we hit the bottom edge
+            }
+            
+            for col in 0..8 {  // 8 bits per byte
+                let x_pos = x_start + col;
+                
+                // Clip at right edge (COSMAC VIP quirk)
+                if x_pos >= DISPLAY_WIDTH {
+                    break;  // Stop drawing this row if we hit the right edge
                 }
-                self.pixels[y_pos][x_pos] ^= true;  // XOR
+                
+                let sprite_pixel = (sprite_byte >> (7 - col)) & 1 == 1;
+                
+                if sprite_pixel {
+                    if self.pixels[y_pos][x_pos] {
+                        collision = true;  // Pixel was on, will turn off
+                    }
+                    self.pixels[y_pos][x_pos] ^= true;  // XOR
+                }
             }
         }
+        
+        collision
     }
-    
-    collision
-}
 
     /// Converts the display to a buffer suitable for minifb
     /// Returns a Vec<u32> where each pixel is either white (0xFFFFFF) or black (0x000000)
@@ -171,15 +187,15 @@ mod tests {
         let mut display = Display::new();
         let sprite = [0b11111111]; // 8 pixels
         
-        // Draw at edge - should wrap around
+        // Draw at edge - COSMAC VIP CLIPPING quirk: clips instead of wrapping
         display.draw_sprite(62, 0, &sprite);
         
-        // Pixels at edge
+        // Pixels at edge (only 2 pixels fit)
         assert_eq!(display.get_pixel(62, 0), true);
         assert_eq!(display.get_pixel(63, 0), true);
-        // Wrapped pixels
-        assert_eq!(display.get_pixel(0, 0), true);
-        assert_eq!(display.get_pixel(1, 0), true);
+        // Rest are clipped (not wrapped)
+        assert_eq!(display.get_pixel(0, 0), false);
+        assert_eq!(display.get_pixel(1, 0), false);
     }
 
     #[test]
