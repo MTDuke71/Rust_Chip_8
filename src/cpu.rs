@@ -24,6 +24,8 @@ pub struct Cpu {
     pub delay_timer: u8,
     /// Sound timer (decrements at 60Hz, beeps while > 0)
     pub sound_timer: u8,
+    /// Key wait state for FX0A: Some(key) = waiting for key to be released, None = not waiting
+    waiting_for_key: Option<u8>,
 }
 
 impl Cpu {
@@ -38,6 +40,7 @@ impl Cpu {
             stack: [0; 16],
             delay_timer: 0,
             sound_timer: 0,
+            waiting_for_key: None,
         }
     }
 
@@ -132,42 +135,61 @@ impl Cpu {
                         self.v[x] = self.v[y];
                     }
                     0x0001 => {
-                        // 8xy1 - OR Vx, Vy: Set Vx = Vx OR Vy
-                        self.v[x] |= self.v[y];
+                        // 8xy1 - OR Vx, Vy: Set Vx = Vx OR Vy, VF = 0
+                        let vx = self.v[x];
+                        let vy = self.v[y];
+                        self.v[x] = vx | vy;
+                        self.v[0xF] = 0;
                     }
                     0x0002 => {
-                        // 8xy2 - AND Vx, Vy: Set Vx = Vx AND Vy
-                        self.v[x] &= self.v[y];
+                        // 8xy2 - AND Vx, Vy: Set Vx = Vx AND Vy, VF = 0
+                        let vx = self.v[x];
+                        let vy = self.v[y];
+                        self.v[x] = vx & vy;
+                        self.v[0xF] = 0;
                     }
                     0x0003 => {
-                        // 8xy3 - XOR Vx, Vy: Set Vx = Vx XOR Vy
-                        self.v[x] ^= self.v[y];
+                        // 8xy3 - XOR Vx, Vy: Set Vx = Vx XOR Vy, VF = 0
+                        let vx = self.v[x];
+                        let vy = self.v[y];
+                        self.v[x] = vx ^ vy;
+                        self.v[0xF] = 0;
                     }
                     0x0004 => {
                         // 8xy4 - ADD Vx, Vy: Set Vx = Vx + Vy, set VF = carry
-                        let sum = self.v[x] as u16 + self.v[y] as u16;
-                        self.v[0xF] = if sum > 0xFF { 1 } else { 0 };
+                        let vx = self.v[x];
+                        let vy = self.v[y];
+                        let sum = vx as u16 + vy as u16;
                         self.v[x] = sum as u8;
+                        self.v[0xF] = if sum > 0xFF { 1 } else { 0 };
                     }
                     0x0005 => {
                         // 8xy5 - SUB Vx, Vy: Set Vx = Vx - Vy, set VF = NOT borrow
-                        self.v[0xF] = if self.v[x] > self.v[y] { 1 } else { 0 };
-                        self.v[x] = self.v[x].wrapping_sub(self.v[y]);
+                        let vx = self.v[x];
+                        let vy = self.v[y];
+                        self.v[x] = vx.wrapping_sub(vy);
+                        self.v[0xF] = if vx > vy { 1 } else { 0 };
                     }
                     0x0006 => {
-                        // 8xy6 - SHR Vx: Set Vx = Vx >> 1, VF = least significant bit
-                        self.v[0xF] = self.v[x] & 0x1;
-                        self.v[x] >>= 1;
+                        // 8xy6 - SHR Vx {, Vy}: Set Vx = Vy >> 1, VF = least significant bit
+                        // COSMAC VIP quirk: copy Vy to Vx first, then shift
+                        let vy = self.v[y];
+                        self.v[x] = vy >> 1;
+                        self.v[0xF] = vy & 0x1;
                     }
                     0x0007 => {
                         // 8xy7 - SUBN Vx, Vy: Set Vx = Vy - Vx, set VF = NOT borrow
-                        self.v[0xF] = if self.v[y] > self.v[x] { 1 } else { 0 };
-                        self.v[x] = self.v[y].wrapping_sub(self.v[x]);
+                        let vx = self.v[x];
+                        let vy = self.v[y];
+                        self.v[x] = vy.wrapping_sub(vx);
+                        self.v[0xF] = if vy > vx { 1 } else { 0 };
                     }
                     0x000E => {
-                        // 8xyE - SHL Vx: Set Vx = Vx << 1, VF = most significant bit
-                        self.v[0xF] = (self.v[x] & 0x80) >> 7;
-                        self.v[x] <<= 1;
+                        // 8xyE - SHL Vx {, Vy}: Set Vx = Vy << 1, VF = most significant bit
+                        // COSMAC VIP quirk: copy Vy to Vx first, then shift
+                        let vy = self.v[y];
+                        self.v[x] = vy << 1;
+                        self.v[0xF] = (vy & 0x80) >> 7;
                     }
                     _ => panic!("Unknown 8xy_ opcode: {:#06x}", opcode),
                 }
@@ -224,12 +246,30 @@ impl Cpu {
                     self.v[x] = self.delay_timer;
                 }
                 0x000A => {
-                    // Fx0A - LD Vx, K: Wait for a key press, store the value of the key in Vx
-                    if let Some(key) = keyboard.get_pressed_key() {
-                        self.v[x] = key;
-                    } else {
-                        // No key pressed - repeat this instruction by not advancing PC
-                        self.pc -= 2;
+                    // Fx0A - LD Vx, K: Wait for a key press AND release, store the value in Vx
+                    match self.waiting_for_key {
+                        None => {
+                            // Not waiting yet - check if a key is pressed
+                            if let Some(key) = keyboard.get_pressed_key() {
+                                // Key pressed - remember it and wait for release
+                                self.waiting_for_key = Some(key);
+                                self.pc -= 2; // Repeat this instruction
+                            } else {
+                                // No key pressed - repeat this instruction
+                                self.pc -= 2;
+                            }
+                        }
+                        Some(key) => {
+                            // Waiting for key release - check if it's released
+                            if !keyboard.is_key_pressed(key) {
+                                // Key released - store it and continue
+                                self.v[x] = key;
+                                self.waiting_for_key = None;
+                            } else {
+                                // Key still pressed - repeat this instruction
+                                self.pc -= 2;
+                            }
+                        }
                     }
                 }
                 0x0015 => {
@@ -258,15 +298,19 @@ impl Cpu {
                 }
                 0x0055 => {
                     // Fx55 - LD [I], Vx: Store registers V0 through Vx in memory starting at location I
+                    // COSMAC VIP quirk: increment I by x+1 after storing
                     for i in 0..=x {
                         memory.write(self.i + i as u16, self.v[i]);
                     }
+                    self.i += (x as u16) + 1;
                 }
                 0x0065 => {
                     // Fx65 - LD Vx, [I]: Read registers V0 through Vx from memory starting at location I
+                    // COSMAC VIP quirk: increment I by x+1 after loading
                     for i in 0..=x {
                         self.v[i] = memory.read(self.i + i as u16);
                     }
+                    self.i += (x as u16) + 1;
                 }
                 _ => panic!("Unknown opcode: {:#06x}", opcode),
             },
