@@ -60,17 +60,12 @@ impl Cpu {
     }
 
     /// Executes one fetch-decode-execute cycle
-    /// 
-    /// DISP.WAIT quirk: After a DRW instruction, CPU halts until vblank.
-    /// This is handled by checking waiting_for_vblank before executing.
-    pub fn cycle(&mut self, memory: &mut Memory, display: &mut Display, keyboard: &Keyboard) {
-        // DISP.WAIT: CPU halts after DRW until vblank clears the flag
-        if self.waiting_for_vblank {
-            return; // CPU is halted, waiting for vblank
-        }
-        
+    /// Returns true if a DRW instruction was executed (for DISP.WAIT quirk)
+    pub fn cycle(&mut self, memory: &mut Memory, display: &mut Display, keyboard: &Keyboard) -> bool {
         let opcode = self.fetch(memory);
         self.execute(opcode, memory, display, keyboard);
+        // Return true if this was a DRW instruction (opcode 0xDxyn)
+        (opcode & 0xF000) == 0xD000
     }
 
     /// Fetches the next 2-byte opcode from memory
@@ -238,7 +233,8 @@ impl Cpu {
             }
             0xD000 => {
                 // Dxyn - DRW Vx, Vy, nibble: Display n-byte sprite at (Vx, Vy), set VF = collision
-                // COSMAC VIP DISP.WAIT quirk: After draw, CPU halts until vblank
+                // COSMAC VIP DISP.WAIT quirk: After draw, main loop breaks early
+                // (waiting_for_vblank flag signals main loop to exit frame loop)
                 let x_coord = self.v[x];
                 let y_coord = self.v[y];
                 let height = n;
