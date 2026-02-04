@@ -61,9 +61,14 @@ impl Cpu {
 
     /// Executes one fetch-decode-execute cycle
     /// 
-    /// Note: DISP.WAIT quirk is handled in the main loop by breaking after DRW,
-    /// not by blocking cycles here. This matches Octo's implementation.
+    /// DISP.WAIT quirk: After a DRW instruction, CPU halts until vblank.
+    /// This is handled by checking waiting_for_vblank before executing.
     pub fn cycle(&mut self, memory: &mut Memory, display: &mut Display, keyboard: &Keyboard) {
+        // DISP.WAIT: CPU halts after DRW until vblank clears the flag
+        if self.waiting_for_vblank {
+            return; // CPU is halted, waiting for vblank
+        }
+        
         let opcode = self.fetch(memory);
         self.execute(opcode, memory, display, keyboard);
     }
@@ -233,8 +238,7 @@ impl Cpu {
             }
             0xD000 => {
                 // Dxyn - DRW Vx, Vy, nibble: Display n-byte sprite at (Vx, Vy), set VF = collision
-                // COSMAC VIP DISP.WAIT quirk: After drawing, CPU halts until next VBlank (60Hz)
-                // This limits drawing to max 60 sprites per second (one per frame)
+                // COSMAC VIP DISP.WAIT quirk: After draw, CPU halts until vblank
                 let x_coord = self.v[x];
                 let y_coord = self.v[y];
                 let height = n;
@@ -244,7 +248,7 @@ impl Cpu {
                 }
                 let collision = display.draw_sprite(x_coord, y_coord, &sprite);
                 self.v[0xF] = if collision { 1 } else { 0 };
-                // DISP.WAIT: Set flag - CPU will halt until next 60Hz timer tick
+                // DISP.WAIT: Halt CPU until vblank (tick_timers clears this)
                 self.waiting_for_vblank = true;
             }
             0xE000 => match opcode & 0x00FF {

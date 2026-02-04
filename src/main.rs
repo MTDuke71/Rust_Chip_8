@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 const WINDOW_WIDTH: usize = 640;
 const WINDOW_HEIGHT: usize = 320;
-const CYCLES_PER_FRAME: u32 = 200;  // Higher for quirks test determinism
+const CYCLES_PER_FRAME: u32 = 15;  // VIP ran ~8-10 instructions/frame; 15 gives headroom
 const TIMER_HZ: u32 = 60;
 
 fn main() {
@@ -222,19 +222,10 @@ fn main() {
                 frames_this_iteration += 1;
                 
                 // Run CPU cycles for this frame
-                let mut cycles_this_frame = 0u32;
-                while cycles_this_frame < cycles_per_frame {
-                    // DISP.WAIT (Octo-style): Check if NEXT instruction is DRW
-                    // If so, execute it then exit the loop (end of frame)
-                    let next_is_draw = cpu.next_instruction_is_draw(&memory);
-                    
+                // DISP.WAIT: CPU keeps running, but only ONE draw per frame
+                // (waiting_for_vblank flag in CPU prevents additional draws)
+                for _ in 0..cycles_per_frame {
                     cpu.cycle(&mut memory, &mut display, &keyboard);
-                    cycles_this_frame += 1;
-                    
-                    // DISP.WAIT: If we just executed a DRW, end the frame early
-                    if next_is_draw {
-                        break;
-                    }
                 }
                 
                 // Timer decrements ONCE per frame (after CPU cycles)
