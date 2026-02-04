@@ -1,1 +1,6 @@
 /target
+
+# ROM files (keep the directory structure but ignore ROM files)
+roms/*.ch8
+roms/*.CH8
+roms/*.txt
