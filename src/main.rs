@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 const WINDOW_WIDTH: usize = 640;
 const WINDOW_HEIGHT: usize = 320;
-const CPU_HZ: u32 = 700;
+const CYCLES_PER_FRAME: u32 = 200;  // Higher for quirks test determinism
 const TIMER_HZ: u32 = 60;
 
 fn main() {
@@ -104,11 +104,10 @@ fn main() {
     // Note: No FPS limiting - let CPU run at full speed (700 Hz)
     // Display updates are naturally limited by monitor refresh rate
 
-    let mut cpu_interval = Duration::from_nanos(1_000_000_000 / CPU_HZ as u64);
+    let mut cycles_per_frame = CYCLES_PER_FRAME;
     let mut timer_interval = Duration::from_nanos(1_000_000_000 / TIMER_HZ as u64);
 
-    let mut last_cpu_time = Instant::now();
-    let mut last_timer_time = Instant::now();
+    let mut last_frame_time = Instant::now();
 
     // Main emulation loop
     while window.is_open() && !window.is_key_down(Key::Escape) {
@@ -143,31 +142,30 @@ fn main() {
             display = Display::new();
             keyboard = Keyboard::new();
             memory.load_rom(&rom_data);
-            last_cpu_time = Instant::now();
-            last_timer_time = Instant::now();
+            last_frame_time = Instant::now();
             println!("Reset emulator");
         }
         last_r_key = r_pressed;
 
-        // CPU Speed up (detect rising edge)
+        // CPU Speed up (detect rising edge) - increases cycles per frame
         if plus_pressed && !last_plus_key {
             speed_multiplier = (speed_multiplier * 2.0).min(4.0);
-            cpu_interval = Duration::from_nanos((1_000_000_000.0 / (CPU_HZ as f32 * speed_multiplier)) as u64);
+            cycles_per_frame = (CYCLES_PER_FRAME as f32 * speed_multiplier) as u32;
             let status = if is_paused { "PAUSED" } else { "" };
             let title = format!("CHIP-8 Emulator - CPU:{:.2}x Timer:{:.2}x {}", speed_multiplier, timer_multiplier, status);
             window.set_title(&title);
-            println!("CPU Speed: {:.2}x", speed_multiplier);
+            println!("CPU Speed: {:.2}x ({} cycles/frame)", speed_multiplier, cycles_per_frame);
         }
         last_plus_key = plus_pressed;
 
         // CPU Speed down (detect rising edge)
         if minus_pressed && !last_minus_key {
             speed_multiplier = (speed_multiplier / 2.0).max(0.25);
-            cpu_interval = Duration::from_nanos((1_000_000_000.0 / (CPU_HZ as f32 * speed_multiplier)) as u64);
+            cycles_per_frame = (CYCLES_PER_FRAME as f32 * speed_multiplier) as u32;
             let status = if is_paused { "PAUSED" } else { "" };
             let title = format!("CHIP-8 Emulator - CPU:{:.2}x Timer:{:.2}x {}", speed_multiplier, timer_multiplier, status);
             window.set_title(&title);
-            println!("CPU Speed: {:.2}x", speed_multiplier);
+            println!("CPU Speed: {:.2}x ({} cycles/frame)", speed_multiplier, cycles_per_frame);
         }
         last_minus_key = minus_pressed;
 
@@ -211,18 +209,36 @@ fn main() {
             // Handle keyboard input
             update_keyboard(&window, &mut keyboard);
 
-            // Run CPU cycles - execute multiple instructions per frame if needed
-            // This allows the CPU to run at 700 Hz even though display updates at ~60 Hz
-            while last_cpu_time.elapsed() >= cpu_interval {
-                cpu.cycle(&mut memory, &mut display, &keyboard);
-                // cpu_cycles += 1;  // Debug counter (commented out for production)
-                last_cpu_time += cpu_interval;
-            }
-
-            // Timer tick (60 Hz * timer_multiplier)
-            if last_timer_time.elapsed() >= timer_interval {
+            // FRAME-BASED EXECUTION (matching Octo exactly):
+            // - Run 'cycles_per_frame' CPU cycles per 60Hz frame
+            // - Timer decrements ONCE per frame (after all CPU cycles)
+            // - DISP.WAIT: When next instruction is DRW, exit cycle loop early
+            // - Catch up on missed frames (up to 2 per iteration like Octo)
+            
+            // Catch-up loop: run up to 2 frames if we're behind
+            let mut frames_this_iteration = 0;
+            while last_frame_time.elapsed() >= timer_interval && frames_this_iteration < 2 {
+                last_frame_time += timer_interval;  // Add interval instead of resetting
+                frames_this_iteration += 1;
+                
+                // Run CPU cycles for this frame
+                let mut cycles_this_frame = 0u32;
+                while cycles_this_frame < cycles_per_frame {
+                    // DISP.WAIT (Octo-style): Check if NEXT instruction is DRW
+                    // If so, execute it then exit the loop (end of frame)
+                    let next_is_draw = cpu.next_instruction_is_draw(&memory);
+                    
+                    cpu.cycle(&mut memory, &mut display, &keyboard);
+                    cycles_this_frame += 1;
+                    
+                    // DISP.WAIT: If we just executed a DRW, end the frame early
+                    if next_is_draw {
+                        break;
+                    }
+                }
+                
+                // Timer decrements ONCE per frame (after CPU cycles)
                 cpu.tick_timers();
-                last_timer_time = Instant::now();
             }
 
             // Handle sound based on sound_timer

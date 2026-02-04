@@ -47,7 +47,22 @@ impl Cpu {
         }
     }
 
+    /// Returns true if the CPU is halted waiting for VBlank (DISP.WAIT quirk)
+    pub fn is_waiting_for_vblank(&self) -> bool {
+        self.waiting_for_vblank
+    }
+
+    /// Checks if the next instruction to be executed is a DRW (DXYN) opcode.
+    /// Used for DISP.WAIT quirk - Octo's approach: check BEFORE executing.
+    pub fn next_instruction_is_draw(&self, memory: &Memory) -> bool {
+        let high_byte = memory.read(self.pc);
+        (high_byte & 0xF0) == 0xD0
+    }
+
     /// Executes one fetch-decode-execute cycle
+    /// 
+    /// Note: DISP.WAIT quirk is handled in the main loop by breaking after DRW,
+    /// not by blocking cycles here. This matches Octo's implementation.
     pub fn cycle(&mut self, memory: &mut Memory, display: &mut Display, keyboard: &Keyboard) {
         let opcode = self.fetch(memory);
         self.execute(opcode, memory, display, keyboard);
@@ -218,25 +233,19 @@ impl Cpu {
             }
             0xD000 => {
                 // Dxyn - DRW Vx, Vy, nibble: Display n-byte sprite at (Vx, Vy), set VF = collision
-                // COSMAC VIP DISP.WAIT quirk: Wait for vertical blank before drawing
-                // This limits drawing to max 60 sprites per second (one per frame at 60 Hz)
-                if self.waiting_for_vblank {
-                    // Still waiting for VBlank - repeat this instruction (like COSMAC VIP IDL)
-                    self.pc -= 2;
-                } else {
-                    // VBlank has occurred, draw the sprite
-                    let x_coord = self.v[x];
-                    let y_coord = self.v[y];
-                    let height = n;
-                    let mut sprite = Vec::new();
-                    for row in 0..height {
-                        sprite.push(memory.read(self.i + row as u16));
-                    }
-                    let collision = display.draw_sprite(x_coord, y_coord, &sprite);
-                    self.v[0xF] = if collision { 1 } else { 0 };
-                    // Set flag - will be cleared on next timer tick (60 Hz VBlank)
-                    self.waiting_for_vblank = true;
+                // COSMAC VIP DISP.WAIT quirk: After drawing, CPU halts until next VBlank (60Hz)
+                // This limits drawing to max 60 sprites per second (one per frame)
+                let x_coord = self.v[x];
+                let y_coord = self.v[y];
+                let height = n;
+                let mut sprite = Vec::new();
+                for row in 0..height {
+                    sprite.push(memory.read(self.i + row as u16));
                 }
+                let collision = display.draw_sprite(x_coord, y_coord, &sprite);
+                self.v[0xF] = if collision { 1 } else { 0 };
+                // DISP.WAIT: Set flag - CPU will halt until next 60Hz timer tick
+                self.waiting_for_vblank = true;
             }
             0xE000 => match opcode & 0x00FF {
                 0x009E => {

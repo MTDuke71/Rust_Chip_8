@@ -4,3 +4,6 @@
 roms/*.ch8
 roms/*.CH8
 roms/*.txt
+
+# Octo reference implementation
+Octo-gh-pages/
