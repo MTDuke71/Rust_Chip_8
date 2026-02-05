@@ -259,13 +259,13 @@ impl Cpu {
             0xE000 => match opcode & 0x00FF {
                 0x009E => {
                     // Ex9E - SKP Vx: Skip next instruction if key with value of Vx is pressed
-                    if keyboard.is_key_pressed(self.v[x]) {
+                    if keyboard.is_key_pressed(self.v[x] & 0x0F) {
                         self.pc += 2;
                     }
                 }
                 0x00A1 => {
                     // ExA1 - SKNP Vx: Skip next instruction if key with value of Vx is NOT pressed
-                    if !keyboard.is_key_pressed(self.v[x]) {
+                    if !keyboard.is_key_pressed(self.v[x] & 0x0F) {
                         self.pc += 2;
                     }
                 }
@@ -318,7 +318,7 @@ impl Cpu {
                 0x0029 => {
                     // Fx29 - LD F, Vx: Set I = location of sprite for digit Vx
                     // Font sprites are 5 bytes each, starting at address 0x000
-                    self.i = (self.v[x] as u16) * 5;
+                    self.i = ((self.v[x] & 0x0F) as u16) * 5;
                 }
                 0x0033 => {
                     // Fx33 - LD B, Vx: Store BCD representation of Vx in memory locations I, I+1, I+2
