@@ -14,8 +14,7 @@ use std::time::{Duration, Instant};
 
 const WINDOW_WIDTH: usize = 640;
 const WINDOW_HEIGHT: usize = 320;
-const CYCLES_PER_FRAME: u32 = 200;  // High value; DISP.WAIT breaks early after DRW anyway
-const TIMER_HZ: u32 = 60;
+const CYCLES_PER_FRAME: u32 = 11;  // Instructions per frame (VIP ~500-1000 Hz / 60 = ~8-17)
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -79,17 +78,18 @@ fn main() {
     let mut total_cycles: u64 = 0;
     let mut total_frames: u64 = 0;
     let mut drw_breaks: u64 = 0;
+    let mut timer_decrements: u64 = 0;
 
     // Emulator state
     let mut is_paused = false;
     let mut speed_multiplier = 1.0f32; // 1.0 = normal speed, range: 0.25x to 4.0x
-    let mut timer_multiplier = 1.0f32; // 1.0 = normal 60Hz, range: 0.25x to 4.0x
+    let timer_multiplier = 1.0f32; // 1.0 = normal 60Hz (fixed for proper DISP.WAIT timing)
     let mut last_p_key = false;
     let mut last_r_key = false;
     let mut last_plus_key = false;
     let mut last_minus_key = false;
-    let mut last_pgup_key = false;
-    let mut last_pgdn_key = false;
+    let last_pgup_key = false;
+    let last_pgdn_key = false;
 
     // Create window
     let mut window = Window::new(
@@ -102,12 +102,13 @@ fn main() {
         panic!("Unable to create window: {}", e);
     });
 
-    // Note: No FPS limiting - let CPU run at full speed (700 Hz)
-    // Display updates are naturally limited by monitor refresh rate
+    // Don't use minifb's rate limiting - we'll do our own precise timing
+    window.set_target_fps(0);
 
     let mut cycles_per_frame = CYCLES_PER_FRAME;
-    let mut timer_interval = Duration::from_nanos(1_000_000_000 / TIMER_HZ as u64);
-
+    
+    // Precise frame timing for DISP.WAIT
+    let frame_duration = Duration::from_nanos(1_000_000_000 / 60); // Exactly 60 Hz
     let mut last_frame_time = Instant::now();
 
     // Main emulation loop
@@ -170,27 +171,9 @@ fn main() {
         }
         last_minus_key = minus_pressed;
 
-        // Timer Speed up (detect rising edge)
-        if pgup_pressed && !last_pgup_key {
-            timer_multiplier = (timer_multiplier * 2.0).min(4.0);
-            timer_interval = Duration::from_nanos((1_000_000_000.0 / (TIMER_HZ as f32 * timer_multiplier)) as u64);
-            let status = if is_paused { "PAUSED" } else { "" };
-            let title = format!("CHIP-8 Emulator - CPU:{:.2}x Timer:{:.2}x {}", speed_multiplier, timer_multiplier, status);
-            window.set_title(&title);
-            println!("Timer Speed: {:.2}x", timer_multiplier);
-        }
-        last_pgup_key = pgup_pressed;
-
-        // Timer Speed down (detect rising edge)
-        if pgdn_pressed && !last_pgdn_key {
-            timer_multiplier = (timer_multiplier / 2.0).max(0.25);
-            timer_interval = Duration::from_nanos((1_000_000_000.0 / (TIMER_HZ as f32 * timer_multiplier)) as u64);
-            let status = if is_paused { "PAUSED" } else { "" };
-            let title = format!("CHIP-8 Emulator - CPU:{:.2}x Timer:{:.2}x {}", speed_multiplier, timer_multiplier, status);
-            window.set_title(&title);
-            println!("Timer Speed: {:.2}x", timer_multiplier);
-        }
-        last_pgdn_key = pgdn_pressed;
+        // Timer Speed controls disabled for now - proper DISP.WAIT requires exactly 60 Hz
+        // Keeping the key checks to avoid warnings
+        let _ = (pgup_pressed, last_pgup_key, pgdn_pressed, last_pgdn_key, timer_multiplier);
 
         // Debug: Report stats every second
         if debug_timer.elapsed() >= Duration::from_secs(1) {
@@ -198,11 +181,12 @@ fn main() {
             let cycles_per_sec = total_cycles as f64 / elapsed;
             let frames_per_sec = total_frames as f64 / elapsed;
             let avg_cycles_per_frame = if total_frames > 0 { total_cycles as f64 / total_frames as f64 } else { 0.0 };
-            println!("DEBUG: Cycles/sec: {:.0}, Frames/sec: {:.1}, Avg cycles/frame: {:.1}, DRW breaks: {}", 
-                     cycles_per_sec, frames_per_sec, avg_cycles_per_frame, drw_breaks);
+            println!("DEBUG: Cycles/sec: {:.0}, Frames/sec: {:.1}, Avg cycles/frame: {:.1}, DRW breaks: {}, Timer decs: {}", 
+                     cycles_per_sec, frames_per_sec, avg_cycles_per_frame, drw_breaks, timer_decrements);
             total_cycles = 0;
             total_frames = 0;
             drw_breaks = 0;
+            timer_decrements = 0;
             debug_timer = Instant::now();
         }
 
@@ -211,36 +195,48 @@ fn main() {
             // Handle keyboard input
             update_keyboard(&window, &mut keyboard);
 
-            // FRAME-BASED EXECUTION:
-            // - Timer decrements ONCE per frame (BEFORE CPU cycles)
-            // - Run 'cycles_per_frame' CPU cycles per 60Hz frame
-            // - DISP.WAIT: If DRW executes, exit cycle loop early
-            // - Catch up on missed frames (up to 2 per iteration)
+            // FRAME-BASED EXECUTION with precise timing:
+            // - Wait for next frame boundary (60 Hz)
+            // - Run CPU cycles until DRW or cycles_per_frame reached
+            // - Timer decrements ONCE per frame (AFTER CPU cycles)
             
-            // Catch-up loop: run up to 2 frames if we're behind
-            let mut frames_this_iteration = 0;
-            while last_frame_time.elapsed() >= timer_interval && frames_this_iteration < 2 {
-                last_frame_time += timer_interval;  // Add interval instead of resetting
-                frames_this_iteration += 1;
-                
-                // Timer decrements ONCE per frame (BEFORE CPU cycles)
-                // This ensures setting a timer gives the correct observed value
-                cpu.tick_timers();
-                
-                // Run CPU cycles for this frame
-                // DISP.WAIT: If DRW executes, break loop early
-                let mut cycles_this_frame = 0;
-                for _ in 0..cycles_per_frame {
-                    let wait_for_vblank = cpu.cycle(&mut memory, &mut display, &keyboard);
-                    cycles_this_frame += 1;
-                    if wait_for_vblank {
-                        drw_breaks += 1;
-                        break;
-                    }
+            // Precise frame timing: spin-wait until frame boundary
+            let now = Instant::now();
+            let elapsed = now.duration_since(last_frame_time);
+            if elapsed < frame_duration {
+                // Sleep for most of the remaining time (minus 1ms for spin accuracy)
+                let remaining = frame_duration - elapsed;
+                if remaining > Duration::from_millis(1) {
+                    std::thread::sleep(remaining - Duration::from_millis(1));
                 }
-                total_cycles += cycles_this_frame;
-                total_frames += 1;
+                // Spin-wait for the exact frame boundary
+                while Instant::now().duration_since(last_frame_time) < frame_duration {
+                    std::hint::spin_loop();
+                }
             }
+            last_frame_time += frame_duration; // Use addition to prevent drift
+            
+            // Timer decrements at START of frame (before CPU cycles)
+            let old_timer = cpu.delay_timer;
+            cpu.tick_timers();
+            if old_timer > 0 && cpu.delay_timer < old_timer {
+                timer_decrements += 1;
+            }
+            
+            // Run CPU cycles for this frame
+            // DISP.WAIT: If DRW executes, break loop early
+            let mut cycles_this_frame = 0;
+            for _ in 0..cycles_per_frame {
+                let wait_for_vblank = cpu.cycle(&mut memory, &mut display, &keyboard);
+                cycles_this_frame += 1;
+                if wait_for_vblank {
+                    drw_breaks += 1;
+                    break;
+                }
+            }
+            
+            total_cycles += cycles_this_frame as u64;
+            total_frames += 1;
 
             // Handle sound based on sound_timer
             if cpu.sound_timer > 0 {
