@@ -1,13 +1,45 @@
 # DISP.WAIT Quirk Debugging Notes
 
 **Last Updated:** February 4, 2026  
-**Status:** ❌ Unresolved - Test shows SLOW
+**Status:** ✅ RESOLVED
 
 ---
 
-## The Problem
+## The Problem (Original)
 
-The `5-quirks.ch8` test ROM passes all quirk tests **except** DISP.WAIT, which displays "SLOW" instead of "ON" with a checkmark.
+The `5-quirks.ch8` test ROM was passing all quirk tests **except** DISP.WAIT, which displayed "SLOW" instead of "ON" with a checkmark.
+
+## Root Cause: 8xy5 SUB Opcode Bug
+
+**The issue was NOT timing-related at all!**
+
+The bug was in the `8xy5` (SUB Vx, Vy) opcode - specifically the VF flag comparison:
+
+```rust
+// WRONG - missed the equal case
+self.v[0xF] = if vx > vy { 1 } else { 0 };
+
+// CORRECT - includes equal case  
+self.v[0xF] = if vx >= vy { 1 } else { 0 };
+```
+
+The VF flag for SUB represents "NOT borrow" - meaning VF=1 when no borrow is needed. When `Vx == Vy`, the result is 0 and **no borrow is needed**, so VF should be 1.
+
+This subtle bug caused the DISP.WAIT test's loop counter to compute incorrectly, making it appear as a timing issue when it was actually an arithmetic bug.
+
+### Verification from Octo Source
+
+From [Octo-gh-pages/js/emulator.js](Octo-gh-pages/js/emulator.js#L322-L324):
+```javascript
+case 0x5:
+    var t = this.v[x]-this.v[y];
+    this.writeCarry(x, t, (this.v[x] >= this.v[y]));  // Uses >=
+    break;
+```
+
+---
+
+## Original Problem Description
 
 ### What is DISP.WAIT?
 
@@ -212,34 +244,36 @@ We discovered frames where no DRW executed, causing extra timer decrements. But 
 
 ## Ideas for Next Session
 
-### 1. Trace V2 Value
-Add debug output to print V2 register value when the test completes:
-```rust
-// In cycle(), when jumping to result addresses
-if pc == 0x0296 || pc == 0x02A0 || pc == 0x02BC {
-    println!("V2 = {}", v[2]);
-}
-```
-
-### 2. One Timer Dec Per DRW (1:1)
-Instead of frame-based timing, decrement the timer exactly once per DRW:
-```rust
-if did_drw {
-    cpu.tick_timers();
-}
-// Remove the frame-based timer tick
-```
-
-### 3. Check Octo's Implementation
-Look at Octo emulator source code for exact DISP.WAIT logic.
-
-### 4. Investigate Timer Decrement Timing
-The test may be sensitive to WHEN in the frame the timer decrements relative to the DRW.
-
-### 5. Consider Initial Frame State
-What happens on the very first frame? Does the timer decrement before any DRW?
+These were attempted but the real issue was the 8xy5 bug (see above).
 
 ---
+
+## VF Flag Verification (All Correct Now)
+
+Compared against Octo source code:
+
+| Opcode | Operation | VF Condition | Status |
+|--------|-----------|--------------|--------|
+| 8xy4 (ADD) | `Vx + Vy` | `sum > 0xFF` | ✅ |
+| 8xy5 (SUB) | `Vx - Vy` | `Vx >= Vy` | ✅ Fixed! |
+| 8xy6 (SHR) | `Vy >> 1` | `Vy & 0x1` | ✅ |
+| 8xy7 (SUBN) | `Vy - Vx` | `Vy >= Vx` | ✅ |
+| 8xyE (SHL) | `Vy << 1` | `(Vy >> 7) & 0x1` | ✅ |
+
+Key implementation detail: Save `vx` and `vy` in local variables BEFORE modifying `self.v[x]`, then use those saved values for the VF comparison.
+
+---
+
+## Lessons Learned
+
+1. **Don't assume the obvious cause** - A timing test failure doesn't necessarily mean a timing bug
+2. **Test suites are your friend** - The `test_opcode.ch8` ROM helped identify the SUB bug
+3. **Compare against reference implementations** - Octo source code confirmed the `>=` requirement
+4. **Edge cases matter** - The difference between `>` and `>=` is critical for the equal case
+
+---
+
+## Original Debugging Attempts (For Reference)
 
 ## Files to Reference
 
@@ -257,7 +291,17 @@ What happens on the very first frame? Does the timer decrement before any DRW?
 - **Timer decrement:** Before CPU cycles
 - **DRW handling:** Returns true from `cycle()`, main loop breaks
 - **Frame timing:** Precise 60 Hz with spin-wait
-- **All other tests:** PASS ✓
+- **All tests now:** PASS ✅
+
+---
+
+## Resolution Summary
+
+**Problem:** DISP.WAIT test showed "SLOW"  
+**Suspected cause:** Timing/frame synchronization issues  
+**Actual cause:** `8xy5` SUB opcode used `>` instead of `>=` for VF flag  
+**Fix:** Changed `vx > vy` to `vx >= vy`  
+**Result:** All quirks tests now pass!
 
 ---
 

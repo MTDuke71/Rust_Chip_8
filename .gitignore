@@ -7,3 +7,4 @@ roms/*.txt
 
 # Octo reference implementation
 Octo-gh-pages/
+.claude/settings.local.json

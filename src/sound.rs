@@ -74,28 +74,31 @@ impl Sound {
             Err(_) => return None,
         };
 
+        // Pre-load the square wave source so it's ready to play
+        let source = SquareWave::new(440.0);
+        sink.append(source);
+        sink.pause(); // Start paused
+
         Some(Sound { _stream, sink })
     }
 
     /// Starts playing the beep sound if not already playing
     pub fn play(&self) {
-        if self.sink.empty() {
-            // Create a square wave at 440 Hz (A4 note)
-            let source = SquareWave::new(440.0);
-            self.sink.append(source);
-            self.sink.play(); // Make sure it's playing
+        if self.sink.is_paused() {
+            self.sink.play();
         }
     }
 
-    /// Stops the beep sound
+    /// Pauses the beep sound
     pub fn stop(&self) {
-        self.sink.stop();
-        self.sink.clear();
+        if !self.sink.is_paused() {
+            self.sink.pause();
+        }
     }
 
     /// Returns true if sound is currently playing
     pub fn is_playing(&self) -> bool {
-        !self.sink.empty() && !self.sink.is_paused()
+        !self.sink.is_paused()
     }
 }
 
@@ -106,6 +109,9 @@ impl Default for Sound {
             // Return a dummy sound that does nothing
             let (_stream, stream_handle) = OutputStream::try_default().unwrap();
             let sink = Sink::try_new(&stream_handle).unwrap();
+            let source = SquareWave::new(440.0);
+            sink.append(source);
+            sink.pause();
             Sound { _stream, sink }
         })
     }

@@ -64,6 +64,7 @@ impl Cpu {
     pub fn cycle(&mut self, memory: &mut Memory, display: &mut Display, keyboard: &Keyboard) -> bool {
         let opcode = self.fetch(memory);
         self.execute(opcode, memory, display, keyboard);
+
         // Return true if this was a DRW instruction (opcode 0xDxyn)
         (opcode & 0xF000) == 0xD000
     }
@@ -183,10 +184,11 @@ impl Cpu {
                     }
                     0x0005 => {
                         // 8xy5 - SUB Vx, Vy: Set Vx = Vx - Vy, set VF = NOT borrow
+                        // NOT borrow means: VF = 1 if Vx >= Vy (no borrow needed), 0 otherwise
                         let vx = self.v[x];
                         let vy = self.v[y];
                         self.v[x] = vx.wrapping_sub(vy);
-                        self.v[0xF] = if vx > vy { 1 } else { 0 };
+                        self.v[0xF] = if vx >= vy { 1 } else { 0 };
                     }
                     0x0006 => {
                         // 8xy6 - SHR Vx {, Vy}: Set Vx = Vy >> 1, VF = least significant bit
@@ -197,10 +199,11 @@ impl Cpu {
                     }
                     0x0007 => {
                         // 8xy7 - SUBN Vx, Vy: Set Vx = Vy - Vx, set VF = NOT borrow
+                        // NOT borrow means: VF = 1 if Vy >= Vx (no borrow needed), 0 otherwise
                         let vx = self.v[x];
                         let vy = self.v[y];
                         self.v[x] = vy.wrapping_sub(vx);
-                        self.v[0xF] = if vy > vx { 1 } else { 0 };
+                        self.v[0xF] = if vy >= vx { 1 } else { 0 };
                     }
                     0x000E => {
                         // 8xyE - SHL Vx {, Vy}: Set Vx = Vy << 1, VF = most significant bit
@@ -233,8 +236,14 @@ impl Cpu {
             }
             0xD000 => {
                 // Dxyn - DRW Vx, Vy, nibble: Display n-byte sprite at (Vx, Vy), set VF = collision
-                // COSMAC VIP DISP.WAIT quirk: After draw, main loop breaks early
-                // (waiting_for_vblank flag signals main loop to exit frame loop)
+                // COSMAC VIP DISP.WAIT quirk: Wait for vblank BEFORE drawing
+                // On real VIP, the IDL instruction halted CPU until the display interrupt.
+                // If already drew this frame, wait until next vblank (re-execute instruction)
+                if self.waiting_for_vblank {
+                    self.pc -= 2; // Repeat this instruction next cycle
+                    return;       // Don't draw yet - wait for tick_timers to clear the flag
+                }
+
                 let x_coord = self.v[x];
                 let y_coord = self.v[y];
                 let height = n;
@@ -244,7 +253,7 @@ impl Cpu {
                 }
                 let collision = display.draw_sprite(x_coord, y_coord, &sprite);
                 self.v[0xF] = if collision { 1 } else { 0 };
-                // DISP.WAIT: Halt CPU until vblank (tick_timers clears this)
+                // DISP.WAIT: Block subsequent draws until next vblank
                 self.waiting_for_vblank = true;
             }
             0xE000 => match opcode & 0x00FF {

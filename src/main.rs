@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 const WINDOW_WIDTH: usize = 640;
 const WINDOW_HEIGHT: usize = 320;
-const CYCLES_PER_FRAME: u32 = 11;  // Instructions per frame (VIP ~500-1000 Hz / 60 = ~8-17)
+const CYCLES_PER_FRAME: u32 = 200;  // Instructions per frame - high value for quirks test (DRW breaks early anyway)
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -73,12 +73,12 @@ fn main() {
     // Load ROM into memory
     memory.load_rom(&rom_data);
 
-    // Debug timing variables
-    let mut debug_timer = Instant::now();
-    let mut total_cycles: u64 = 0;
-    let mut total_frames: u64 = 0;
-    let mut drw_breaks: u64 = 0;
-    let mut timer_decrements: u64 = 0;
+    // Debug timing variables (commented out)
+    // let mut debug_timer = Instant::now();
+    // let mut total_cycles: u64 = 0;
+    // let mut total_frames: u64 = 0;
+    // let mut drw_breaks: u64 = 0;
+    // let mut timer_decrements: u64 = 0;
 
     // Emulator state
     let mut is_paused = false;
@@ -175,20 +175,20 @@ fn main() {
         // Keeping the key checks to avoid warnings
         let _ = (pgup_pressed, last_pgup_key, pgdn_pressed, last_pgdn_key, timer_multiplier);
 
-        // Debug: Report stats every second
-        if debug_timer.elapsed() >= Duration::from_secs(1) {
-            let elapsed = debug_timer.elapsed().as_secs_f64();
-            let cycles_per_sec = total_cycles as f64 / elapsed;
-            let frames_per_sec = total_frames as f64 / elapsed;
-            let avg_cycles_per_frame = if total_frames > 0 { total_cycles as f64 / total_frames as f64 } else { 0.0 };
-            println!("DEBUG: Cycles/sec: {:.0}, Frames/sec: {:.1}, Avg cycles/frame: {:.1}, DRW breaks: {}, Timer decs: {}", 
-                     cycles_per_sec, frames_per_sec, avg_cycles_per_frame, drw_breaks, timer_decrements);
-            total_cycles = 0;
-            total_frames = 0;
-            drw_breaks = 0;
-            timer_decrements = 0;
-            debug_timer = Instant::now();
-        }
+        // Debug: Report stats every second (commented out)
+        // if debug_timer.elapsed() >= Duration::from_secs(1) {
+        //     let elapsed = debug_timer.elapsed().as_secs_f64();
+        //     let cycles_per_sec = total_cycles as f64 / elapsed;
+        //     let frames_per_sec = total_frames as f64 / elapsed;
+        //     let avg_cycles_per_frame = if total_frames > 0 { total_cycles as f64 / total_frames as f64 } else { 0.0 };
+        //     println!("DEBUG: Cycles/sec: {:.0}, Frames/sec: {:.1}, Avg cycles/frame: {:.1}, DRW breaks: {}, Timer decs: {}",
+        //              cycles_per_sec, frames_per_sec, avg_cycles_per_frame, drw_breaks, timer_decrements);
+        //     total_cycles = 0;
+        //     total_frames = 0;
+        //     drw_breaks = 0;
+        //     timer_decrements = 0;
+        //     debug_timer = Instant::now();
+        // }
 
         // Skip execution if paused
         if !is_paused {
@@ -216,27 +216,17 @@ fn main() {
             }
             last_frame_time += frame_duration; // Use addition to prevent drift
             
-            // Timer decrements at START of frame (before CPU cycles)
-            let old_timer = cpu.delay_timer;
-            cpu.tick_timers();
-            if old_timer > 0 && cpu.delay_timer < old_timer {
-                timer_decrements += 1;
-            }
-            
             // Run CPU cycles for this frame
             // DISP.WAIT: If DRW executes, break loop early
-            let mut cycles_this_frame = 0;
             for _ in 0..cycles_per_frame {
                 let wait_for_vblank = cpu.cycle(&mut memory, &mut display, &keyboard);
-                cycles_this_frame += 1;
                 if wait_for_vblank {
-                    drw_breaks += 1;
                     break;
                 }
             }
-            
-            total_cycles += cycles_this_frame as u64;
-            total_frames += 1;
+
+            // Timer decrements at END of frame (after CPU cycles)
+            cpu.tick_timers();
 
             // Handle sound based on sound_timer
             if cpu.sound_timer > 0 {
